@@ -5,23 +5,45 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sched.h>
-#include <memory>
-#include <array>
+#include <dirent.h>
 #include <vector>
+#include <set>
+#include <algorithm>
 
 using namespace std;
 
-int last_pid = -1;
+string his_env;
+string xdg_env;
+set<int> managed_pids;
+vector<int> current_active_tree;
 
-// Ultra-fast query to Hyprland for active PID without loading heavy JSON libs
+// Direct UNIX Socket call to Hyprland (Zero Forking!)
 int get_active_pid() {
-    array<char, 128> buffer;
-    string result;
-    unique_ptr<FILE, decltype(&pclose)> pipe(popen("hyprctl activewindow -j 2>/dev/null", "r"), pclose);
-    if (!pipe) return -1;
-    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-        result += buffer.data();
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    string socket_path = xdg_env + "/hypr/" + his_env + "/.socket.sock";
+    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        close(sock);
+        return -1;
     }
+
+    const char* cmd = "j/activewindow";
+    write(sock, cmd, strlen(cmd));
+
+    char buffer[4096];
+    string result = "";
+    while (true) {
+        ssize_t bytes = read(sock, buffer, sizeof(buffer) - 1);
+        if (bytes <= 0) break;
+        buffer[bytes] = '\0';
+        result += buffer;
+    }
+    close(sock);
+
     size_t pos = result.find("\"pid\":");
     if (pos != string::npos) {
         return stoi(result.substr(pos + 6));
@@ -29,53 +51,90 @@ int get_active_pid() {
     return -1;
 }
 
-// Hardware-level Kernel call for Core Affinity
-void set_affinity(int pid, bool is_background) {
-    if (pid <= 0) return;
+// Deep Process Tree Traversal
+void get_children(int ppid, vector<int>& children) {
+    DIR* proc = opendir("/proc");
+    if (!proc) return;
+    struct dirent* ent;
+    while ((ent = readdir(proc))) {
+        if (!isdigit(ent->d_name[0])) continue;
+        int pid = atoi(ent->d_name);
+        char stat_path[256];
+        snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", pid);
+        FILE* f = fopen(stat_path, "r");
+        if (f) {
+            int file_pid; char comm[256]; char state; int file_ppid;
+            if (fscanf(f, "%d %s %c %d", &file_pid, comm, &state, &file_ppid) == 4) {
+                if (file_ppid == ppid) {
+                    children.push_back(pid);
+                    get_children(pid, children); // Recursive deep search
+                }
+            }
+            fclose(f);
+        }
+    }
+    closedir(proc);
+}
+
+// Apply Hardware Affinity to ALL threads of a PID
+void apply_affinity(int pid, bool is_background) {
     cpu_set_t mask;
     CPU_ZERO(&mask);
-    
     if (is_background) {
-        // Starve the background app: lock to secondary cores (2,3)
         CPU_SET(2, &mask);
         CPU_SET(3, &mask);
     } else {
-        // God Mode for active app: Full access to all cores (0,1,2,3)
         CPU_SET(0, &mask);
         CPU_SET(1, &mask);
         CPU_SET(2, &mask);
         CPU_SET(3, &mask);
     }
-    
-    // Direct system call, bypassing software schedulers
-    sched_setaffinity(pid, sizeof(cpu_set_t), &mask);
+
+    char task_path[256];
+    snprintf(task_path, sizeof(task_path), "/proc/%d/task", pid);
+    DIR* task_dir = opendir(task_path);
+    if (task_dir) {
+        struct dirent* ent;
+        while ((ent = readdir(task_dir))) {
+            if (!isdigit(ent->d_name[0])) continue;
+            int tid = atoi(ent->d_name);
+            sched_setaffinity(tid, sizeof(cpu_set_t), &mask);
+        }
+        closedir(task_dir);
+    }
 }
 
 void vayu_core_logic(int new_pid) {
-    if (new_pid == last_pid) return;
-    
-    // 1. Instantly boost the new window
-    set_affinity(new_pid, false);
-    
-    // 2. Choke the previous window
-    if (last_pid > 0) {
-        set_affinity(last_pid, true);
+    // 1. Build the full tree for the new active window
+    vector<int> new_tree = {new_pid};
+    get_children(new_pid, new_tree);
+
+    // 2. Choke all previously managed PIDs that are NOT in the new tree
+    for (int old_pid : managed_pids) {
+        if (find(new_tree.begin(), new_tree.end(), old_pid) == new_tree.end()) {
+            apply_affinity(old_pid, true);
+        }
+    }
+
+    // 3. Boost all PIDs in the new tree and add to managed list
+    for (int pid : new_tree) {
+        apply_affinity(pid, false);
+        managed_pids.insert(pid);
     }
     
-    last_pid = new_pid;
+    current_active_tree = new_tree;
 }
 
 int main() {
-    const char* his = getenv("HYPRLAND_INSTANCE_SIGNATURE");
-    const char* xdg = getenv("XDG_RUNTIME_DIR");
+    if (getenv("HYPRLAND_INSTANCE_SIGNATURE")) his_env = getenv("HYPRLAND_INSTANCE_SIGNATURE");
+    if (getenv("XDG_RUNTIME_DIR")) xdg_env = getenv("XDG_RUNTIME_DIR");
     
-    if (!his || !xdg) {
-        cerr << "VAYU FATAL: Wayland/Hyprland Environment variables missing." << endl;
+    if (his_env.empty() || xdg_env.empty()) {
+        cerr << "VAYU FATAL: Wayland Environment missing." << endl;
         return 1;
     }
 
-    string socket_path = string(xdg) + "/hypr/" + string(his) + "/.socket2.sock";
-
+    string socket_path = xdg_env + "/hypr/" + his_env + "/.socket2.sock";
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
@@ -83,11 +142,11 @@ int main() {
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        cerr << "VAYU FATAL: Failed to connect to Hyprland IPC." << endl;
+        cerr << "VAYU FATAL: Failed to connect to IPC." << endl;
         return 1;
     }
 
-    cout << "VAYU C++ Core Online. Listening to Wayland IPC..." << endl;
+    cout << "VAYU 2.0 Core Online. Advanced Thread Traversal Active." << endl;
 
     char buffer[1024];
     while (true) {
@@ -96,10 +155,9 @@ int main() {
         buffer[bytes] = '\0';
         string data(buffer);
         
-        // Zero-latency event trigger
         if (data.find("activewindow>>") != string::npos) {
             int pid = get_active_pid();
-            if (pid > 0) {
+            if (pid > 0 && (current_active_tree.empty() || pid != current_active_tree[0])) {
                 vayu_core_logic(pid);
             }
         }
