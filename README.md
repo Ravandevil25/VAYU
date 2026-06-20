@@ -42,11 +42,14 @@ By synchronizing with Wayland compositor IPC events, VAYU identifies foreground 
 5. **Daemon Whitelisting:** Extensible policy engine (`~/.config/vayu/whitelist.conf`) to bypass real-time audio and critical system daemons (e.g., `pipewire`).
 
 ## 🛡️ Deployment
-VAYU must be compiled natively for your target CPU architecture and requires `CAP_SYS_NICE` capabilities to override the kernel scheduler.
+VAYU must be compiled natively for your target CPU architecture and requires `CAP_SYS_NICE` and `CAP_BPF` capabilities to override the kernel scheduler and interact with eBPF maps.
 
 ```bash
-g++ -O3 -march=native vayu.cpp -o vayu-daemon
-sudo setcap cap_sys_nice+ep vayu-daemon
+# Compile both the C++ Daemon and the eBPF Kernel Module
+make all
+
+# Inject Kernel Capabilities
+sudo setcap 'cap_sys_nice,cap_sys_admin,cap_bpf+ep' vayu-daemon
 ```
 
 ## ⚖️ Legal
