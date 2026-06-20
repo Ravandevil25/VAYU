@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <fstream>
 #include <memory>
+#include <cerrno>
 
 using namespace std;
 
@@ -51,7 +52,9 @@ bool is_whitelisted(int pid) {
 // Garbage Collection: Remove closed apps to prevent PID re-use memory leaks
 void cleanup_dead_pids() {
     for (auto it = managed_pids.begin(); it != managed_pids.end(); ) {
-        if (kill(*it, 0) == -1) {
+        // ESRCH means the process genuinely does not exist. 
+        // EPERM (permission denied) means it exists but we can't signal it (e.g. root process).
+        if (kill(*it, 0) == -1 && errno == ESRCH) {
             it = managed_pids.erase(it);
         } else {
             ++it;
