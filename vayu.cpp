@@ -8,12 +8,13 @@
 #include <dirent.h>
 #include <csignal>
 #include <sys/resource.h>
+#include <sys/syscall.h>
+#include <linux/bpf.h>
 #include <vector>
 #include <set>
 #include <algorithm>
 #include <fstream>
 #include <memory>
-#include <cerrno>
 
 using namespace std;
 
@@ -22,6 +23,57 @@ string xdg_env;
 set<int> managed_pids;
 vector<int> current_active_tree;
 vector<string> whitelist = {"pipewire", "wireplumber", "obs", "docker"};
+
+// eBPF Map File Descriptor
+int bpf_map_fd = -1;
+
+// Wrapper for the bpf() system call
+int bpf_syscall(int cmd, union bpf_attr *attr, unsigned int size) {
+    return syscall(__NR_bpf, cmd, attr, size);
+}
+
+// Initialize the eBPF Hash Map in the Kernel
+void init_ebpf_map() {
+    union bpf_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.map_type = BPF_MAP_TYPE_HASH;
+    attr.key_size = sizeof(int);   // Key: PID
+    attr.value_size = sizeof(int); // Value: Status (0 = Active, 1 = Background)
+    attr.max_entries = 4096;
+
+    bpf_map_fd = bpf_syscall(BPF_MAP_CREATE, &attr, sizeof(attr));
+    if (bpf_map_fd < 0) {
+        cerr << "VAYU WARNING: Failed to create eBPF Map (Requires Root/CAP_SYS_ADMIN). Running in standard syscall mode." << endl;
+    } else {
+        cout << "VAYU SUCCESS: eBPF Kernel Map created! Bridge established." << endl;
+    }
+}
+
+// Update the eBPF Map for a specific PID
+void update_ebpf_map(int pid, int status) {
+    if (bpf_map_fd < 0) return;
+    
+    union bpf_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.map_fd = bpf_map_fd;
+    attr.key = reinterpret_cast<__u64>(&pid);
+    attr.value = reinterpret_cast<__u64>(&status);
+    attr.flags = BPF_ANY;
+    
+    bpf_syscall(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
+}
+
+// Remove dead PIDs from the eBPF Map
+void delete_ebpf_map(int pid) {
+    if (bpf_map_fd < 0) return;
+    
+    union bpf_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.map_fd = bpf_map_fd;
+    attr.key = reinterpret_cast<__u64>(&pid);
+    
+    bpf_syscall(BPF_MAP_DELETE_ELEM, &attr, sizeof(attr));
+}
 
 void load_whitelist() {
     string path = string(getenv("HOME")) + "/.config/vayu/whitelist.conf";
@@ -49,12 +101,10 @@ bool is_whitelisted(int pid) {
     return false;
 }
 
-// Garbage Collection: Remove closed apps to prevent PID re-use memory leaks
 void cleanup_dead_pids() {
     for (auto it = managed_pids.begin(); it != managed_pids.end(); ) {
-        // ESRCH means the process genuinely does not exist. 
-        // EPERM (permission denied) means it exists but we can't signal it (e.g. root process).
         if (kill(*it, 0) == -1 && errno == ESRCH) {
+            delete_ebpf_map(*it); // Clean eBPF Map
             it = managed_pids.erase(it);
         } else {
             ++it;
@@ -127,13 +177,15 @@ void apply_affinity_and_nice(int pid, bool is_background) {
     if (is_background) {
         CPU_SET(2, &mask);
         CPU_SET(3, &mask);
-        setpriority(PRIO_PROCESS, pid, 5); // Choke software priority
+        setpriority(PRIO_PROCESS, pid, 5); 
+        update_ebpf_map(pid, 1); // Inform eBPF Kernel: Background
     } else {
         CPU_SET(0, &mask);
         CPU_SET(1, &mask);
         CPU_SET(2, &mask);
         CPU_SET(3, &mask);
-        setpriority(PRIO_PROCESS, pid, -10); // God-Mode software priority
+        setpriority(PRIO_PROCESS, pid, -10); 
+        update_ebpf_map(pid, 0); // Inform eBPF Kernel: Active
     }
 
     char task_path[256];
@@ -180,6 +232,7 @@ int main() {
     }
 
     load_whitelist();
+    init_ebpf_map(); // Boot up the eBPF Kernel Bridge
 
     string socket_path = xdg_env + "/hypr/" + his_env + "/.socket2.sock";
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -193,7 +246,7 @@ int main() {
         return 1;
     }
 
-    cout << "VAYU 3.0 Core Online. Garbage Collector & Scheduler Injection Active." << endl;
+    cout << "VAYU 5.0 (eBPF Edition) Core Online." << endl;
 
     char buffer[1024];
     while (true) {

@@ -35,10 +35,11 @@ By synchronizing with Wayland compositor IPC events, VAYU identifies foreground 
 ```
 
 ## ⚡ Key Features
-1. **Recursive Thread Discovery:** Parses `/proc/<pid>/task` to dynamically identify and migrate every child process and execution thread of multi-process applications (e.g., Chromium).
-2. **Zero-Polling IPC Hook:** Utilizes blocking I/O on UNIX domain sockets (`.socket.sock` & `.socket2.sock`) for 0.00% idle CPU overhead.
-3. **Orphan Protection:** Actively tracks PID lifecycles utilizing `kill(pid, 0)` with robust `EPERM` vs `ESRCH` handling to prevent memory leaks from OS PID recycling.
-4. **Daemon Whitelisting:** Extensible policy engine (`~/.config/vayu/whitelist.conf`) to bypass real-time audio and critical system daemons (e.g., `pipewire`).
+1. **eBPF Kernel Bridge (VAYU 5.0):** VAYU pioneers the User-Space to Kernel-Space eBPF pipeline for desktop compositors. The daemon natively creates an eBPF Hash Map in the Linux Kernel using `sys_bpf`. Real-time active and background PID trees are written directly into kernel memory. Future integration with `sched_ext` (SCX) allows the kernel to natively read this map and block context switches at the silicon level.
+2. **Recursive Thread Discovery:** Parses `/proc/<pid>/task` to dynamically identify and migrate every child process and execution thread of multi-process applications (e.g., Chromium).
+3. **Zero-Polling IPC Hook:** Utilizes blocking I/O on UNIX domain sockets (`.socket.sock` & `.socket2.sock`) for 0.00% idle CPU overhead.
+4. **Orphan Protection:** Actively tracks PID lifecycles utilizing `kill(pid, 0)` with robust `EPERM` vs `ESRCH` handling to prevent memory leaks from OS PID recycling.
+5. **Daemon Whitelisting:** Extensible policy engine (`~/.config/vayu/whitelist.conf`) to bypass real-time audio and critical system daemons (e.g., `pipewire`).
 
 ## 🛡️ Deployment
 VAYU must be compiled natively for your target CPU architecture and requires `CAP_SYS_NICE` capabilities to override the kernel scheduler.
