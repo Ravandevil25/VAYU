@@ -40,7 +40,8 @@ This is not software priority. This is **Hardware Segregation**.
 1. **Deep Thread Injection (VAYU 2.0):** Standard optimizers only target the parent process. VAYU reads the `/proc/<pid>/task` subsystem to discover and physically lock *every single child process and thread* (perfect for multi-process browsers like Edge/Chrome).
 2. **Global Background Starvation:** Once VAYU detects a process, it maintains a global registry. When a window loses focus, every thread associated with it is banished to the background CPU cores (Core 2, 3), ensuring true 100% isolation for your active window.
 3. **Zero-Shell Execution:** VAYU connects directly to the `.socket.sock` and `.socket2.sock` Wayland IPC pipes using pure C++ POSIX sockets. It parses the JSON internally with zero `popen()` overhead. Execution time is under 1 millisecond.
-4. **Patentable Novelty:** Linking compositor-level active window state to `cpu_set_t` bitmasks dynamically on desktop Linux is an unmapped architectural frontier.
+4. **Garbage Collection & Safe Whitelisting (VAYU 3.0):** VAYU actively monitors PIDs via `kill(pid, 0)` to prevent memory leaks from PID re-use. It also securely bypasses critical background audio/system daemons (`pipewire`, `obs`) via a highly-optimized whitelist configuration.
+5. **Scheduler Override (`renice`):** In addition to hardware isolation, VAYU drops the software `nice` value of the active window to `-10` while demoting background windows to `+5`.
 
 ## 🛡️ Compilation & Deployment
 This daemon is compiled directly on your machine specifically for your exact CPU instruction set.

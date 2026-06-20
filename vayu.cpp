@@ -6,9 +6,13 @@
 #include <sys/un.h>
 #include <sched.h>
 #include <dirent.h>
+#include <csignal>
+#include <sys/resource.h>
 #include <vector>
 #include <set>
 #include <algorithm>
+#include <fstream>
+#include <memory>
 
 using namespace std;
 
@@ -16,8 +20,45 @@ string his_env;
 string xdg_env;
 set<int> managed_pids;
 vector<int> current_active_tree;
+vector<string> whitelist = {"pipewire", "wireplumber", "obs", "docker"};
 
-// Direct UNIX Socket call to Hyprland (Zero Forking!)
+void load_whitelist() {
+    string path = string(getenv("HOME")) + "/.config/vayu/whitelist.conf";
+    ifstream file(path);
+    string line;
+    if(file.is_open()) {
+        whitelist.clear();
+        while(getline(file, line)) {
+            if(line.length() > 0 && line[0] != '#') whitelist.push_back(line);
+        }
+        file.close();
+    }
+}
+
+bool is_whitelisted(int pid) {
+    char comm_path[256];
+    snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", pid);
+    ifstream comm_file(comm_path);
+    string proc_name;
+    if(comm_file >> proc_name) {
+        for (const string& w : whitelist) {
+            if (proc_name.find(w) != string::npos) return true;
+        }
+    }
+    return false;
+}
+
+// Garbage Collection: Remove closed apps to prevent PID re-use memory leaks
+void cleanup_dead_pids() {
+    for (auto it = managed_pids.begin(); it != managed_pids.end(); ) {
+        if (kill(*it, 0) == -1) {
+            it = managed_pids.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 int get_active_pid() {
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr;
@@ -51,7 +92,6 @@ int get_active_pid() {
     return -1;
 }
 
-// Deep Process Tree Traversal
 void get_children(int ppid, vector<int>& children) {
     DIR* proc = opendir("/proc");
     if (!proc) return;
@@ -67,7 +107,7 @@ void get_children(int ppid, vector<int>& children) {
             if (fscanf(f, "%d %s %c %d", &file_pid, comm, &state, &file_ppid) == 4) {
                 if (file_ppid == ppid) {
                     children.push_back(pid);
-                    get_children(pid, children); // Recursive deep search
+                    get_children(pid, children); 
                 }
             }
             fclose(f);
@@ -76,18 +116,21 @@ void get_children(int ppid, vector<int>& children) {
     closedir(proc);
 }
 
-// Apply Hardware Affinity to ALL threads of a PID
-void apply_affinity(int pid, bool is_background) {
+void apply_affinity_and_nice(int pid, bool is_background) {
+    if (is_whitelisted(pid)) return;
+
     cpu_set_t mask;
     CPU_ZERO(&mask);
     if (is_background) {
         CPU_SET(2, &mask);
         CPU_SET(3, &mask);
+        setpriority(PRIO_PROCESS, pid, 5); // Choke software priority
     } else {
         CPU_SET(0, &mask);
         CPU_SET(1, &mask);
         CPU_SET(2, &mask);
         CPU_SET(3, &mask);
+        setpriority(PRIO_PROCESS, pid, -10); // God-Mode software priority
     }
 
     char task_path[256];
@@ -105,20 +148,19 @@ void apply_affinity(int pid, bool is_background) {
 }
 
 void vayu_core_logic(int new_pid) {
-    // 1. Build the full tree for the new active window
+    cleanup_dead_pids();
+    
     vector<int> new_tree = {new_pid};
     get_children(new_pid, new_tree);
 
-    // 2. Choke all previously managed PIDs that are NOT in the new tree
     for (int old_pid : managed_pids) {
         if (find(new_tree.begin(), new_tree.end(), old_pid) == new_tree.end()) {
-            apply_affinity(old_pid, true);
+            apply_affinity_and_nice(old_pid, true);
         }
     }
 
-    // 3. Boost all PIDs in the new tree and add to managed list
     for (int pid : new_tree) {
-        apply_affinity(pid, false);
+        apply_affinity_and_nice(pid, false);
         managed_pids.insert(pid);
     }
     
@@ -134,6 +176,8 @@ int main() {
         return 1;
     }
 
+    load_whitelist();
+
     string socket_path = xdg_env + "/hypr/" + his_env + "/.socket2.sock";
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr;
@@ -146,7 +190,7 @@ int main() {
         return 1;
     }
 
-    cout << "VAYU 2.0 Core Online. Advanced Thread Traversal Active." << endl;
+    cout << "VAYU 3.0 Core Online. Garbage Collector & Scheduler Injection Active." << endl;
 
     char buffer[1024];
     while (true) {
