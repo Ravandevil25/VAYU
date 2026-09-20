@@ -1,0 +1,8 @@
+# VAYU process whitelist
+# One process name (or substring) per line. Lines starting with # are ignored.
+# These processes are never touched by VAYU affinity/nice logic.
+pipewire
+wireplumber
+obs
+docker
+pipewire-pulse

@@ -3,7 +3,7 @@ Description=Project VAYU: Dynamic Hardware-Level Core Isolation Daemon
 After=network.target
 
 [Service]
-ExecStart=/home/saurav/VAYU_Project/vayu-daemon
+ExecStart=/usr/bin/vayu-daemon
 Restart=always
 RestartSec=3
 

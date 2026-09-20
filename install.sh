@@ -1,14 +1,15 @@
 #!/bin/bash
 set -e
-echo "🌪️ Compiling VAYU Daemon for native architecture..."
-g++ -O3 -march=native vayu.cpp -o vayu-daemon
+echo "Compiling VAYU Daemon..."
+make all
 
-echo "🛡️ Injecting CAP_SYS_NICE capability (requires sudo)..."
-sudo setcap cap_sys_nice+ep vayu-daemon
+echo "Installing (DESTDIR aware, PREFIX=/usr)..."
+make install
 
-echo "🛡️ Setting up systemd service..."
-mkdir -p ~/.config/systemd/user/
-cp vayu.service ~/.config/systemd/user/
+echo "Injecting CAP_SYS_NICE capability (requires sudo)..."
+sudo setcap cap_sys_nice,cap_sys_admin,cap_bpf+ep /usr/bin/vayu-daemon
+
+echo "Setting up systemd user service..."
 systemctl --user daemon-reload
 systemctl --user enable --now vayu.service
-echo "✅ VAYU Deployed and Active!"
+echo "VAYU Deployed and Active!"
