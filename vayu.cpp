@@ -43,9 +43,9 @@ void init_ebpf_map() {
 
     bpf_map_fd = bpf_syscall(BPF_MAP_CREATE, &attr, sizeof(attr));
     if (bpf_map_fd < 0) {
-        cerr << "VAYU WARNING: Failed to create eBPF Map (Requires Root/CAP_SYS_ADMIN). Running in standard syscall mode." << endl;
+        cerr << "vayu: eBPF map creation failed (requires CAP_SYS_ADMIN). Continuing in syscall-only mode." << endl;
     } else {
-        cout << "VAYU SUCCESS: eBPF Kernel Map created! Bridge established." << endl;
+        cout << "vayu: eBPF map created." << endl;
     }
 }
 
@@ -227,7 +227,7 @@ int main() {
     if (getenv("XDG_RUNTIME_DIR")) xdg_env = getenv("XDG_RUNTIME_DIR");
     
     if (his_env.empty() || xdg_env.empty()) {
-        cerr << "VAYU FATAL: Wayland Environment missing." << endl;
+        cerr << "vayu: missing Wayland environment (HYPRLAND_INSTANCE_SIGNATURE, XDG_RUNTIME_DIR)." << endl;
         return 1;
     }
 
@@ -242,11 +242,11 @@ int main() {
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        cerr << "VAYU FATAL: Failed to connect to IPC." << endl;
+        cerr << "vayu: failed to connect to compositor IPC socket." << endl;
         return 1;
     }
 
-    cout << "VAYU 5.0 (eBPF Edition) Core Online." << endl;
+    cout << "vayu: daemon started." << endl;
 
     char buffer[1024];
     while (true) {

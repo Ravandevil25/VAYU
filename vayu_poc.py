@@ -7,7 +7,7 @@ import subprocess
 def get_hyprland_socket():
     his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
     if not his:
-        print("Error: Hyprland is not running or HYPRLAND_INSTANCE_SIGNATURE is not set.")
+        print("error: HYPRLAND_INSTANCE_SIGNATURE is not set (Hyprland not running).")
         exit(1)
     return f"/tmp/hypr/{his}/.socket2.sock"
 
@@ -20,18 +20,14 @@ def get_active_window_pid():
         return None, None
 
 def isolate_core_for_pid(pid, title):
-    # This is the VAYU Algorithm Execution
-    # For this PoC, we will safely simulate the hardware pinning.
-    print(f"\n[VAYU ALGORITHM TRIGGERED]")
-    print(f"🎯 Target Acquired: {title} (PID: {pid})")
-    print(f"⚡ VAYU is locking Physical Core 0 exclusively for PID {pid}...")
-    print(f"🛑 VAYU is migrating all background GUI apps to Core 1 & 2...")
-    print(f"✅ Hardware Partition Complete. Zero-Latency mode active for: {title}\n")
-    # In production, we execute: os.system(f"taskset -pc 0 {pid}")
+    # Proof-of-concept simulation of the affinity migration (no taskset executed).
+    print(f"active window: {title} (pid {pid})")
+    print(f"would pin pid {pid} to core 0")
+    print("would restrict previous window tree to cores 1-2")
 
 def listen_to_ipc():
     sock_path = get_hyprland_socket()
-    print(f"📡 VAYU Core Listening to Hyprland IPC: {sock_path}")
+    print(f"listening on {sock_path}")
     
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.connect(sock_path)

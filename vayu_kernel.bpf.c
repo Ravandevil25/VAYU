@@ -1,11 +1,10 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 
-/* 
- * PROJECT VAYU: Kernel-Level BPF Program
- * This map is shared with the User-Space C++ Daemon.
- * Key: PID (Process ID)
- * Value: 0 for Active (God Mode), 1 for Background (Restricted)
+/*
+ * VAYU kernel BPF program.
+ * Shared map with the userspace daemon.
+ * Key: PID. Value: 0 for active, 1 for background.
  */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -15,10 +14,10 @@ struct {
 } vayu_pid_map SEC(".maps");
 
 /*
- * HOOK: Sched Wakeup
- * Intercepts tasks waking up. If a background task tries to wake up
- * on a restricted core (0 or 1), the eBPF program can flag it or migrate it.
- * (For sched_ext, this would hook into scx_ops).
+ * sched_wakeup tracepoint.
+ * Looks up the waking PID in the VAYU map. Active entries are left alone;
+ * background entries are candidates for restriction under a full sched_ext
+ * implementation.
  */
 SEC("tp/sched/sched_wakeup")
 int vayu_enforce_affinity(void *ctx) {
@@ -26,15 +25,13 @@ int vayu_enforce_affinity(void *ctx) {
     
     int *status = bpf_map_lookup_elem(&vayu_pid_map, &pid);
     if (!status) {
-        return 0; // Not a graphical process managed by VAYU
+        return 0;
     }
 
     if (*status == 0) {
-        // Active Window Process: Grant maximum scheduling priority
-        // In a full SCX implementation, we call scx_bpf_kick_cpus()
+        // Active process: no action.
     } else {
-        // Background Process: Penalize and restrict
-        // Ensure it stays off Core 0
+        // Background process: restrict under a full sched_ext implementation.
     }
 
     return 0;

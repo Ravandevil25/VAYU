@@ -24,7 +24,7 @@ def get_hyprland_socket():
     except Exception as e:
         print(e)
         
-    print("Error: Could not find Hyprland socket.")
+    print("error: Hyprland socket not found.")
     exit(1)
 
 def get_active_window_pid():

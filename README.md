@@ -1,56 +1,54 @@
-<div align="center">
+# VAYU
 
-# 🌪️ Project VAYU
-**Focus-Aware Dynamic CPU Affinity Manager for Wayland**
+Focus-aware dynamic CPU affinity manager for Wayland compositors.
 
-[![Written In](https://img.shields.io/badge/Written%20In-C++-blue.svg)](https://isocpp.org/)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Wayland-orange.svg)]()
-[![Status](https://img.shields.io/badge/Status-Stable%20Release-green.svg)]()
+## Overview
 
-</div>
+VAYU reduces CFS contention on desktop Linux by migrating thread trees based on window focus events. On each `activewindow` event from the compositor IPC socket, the daemon resolves the foreground PID, enumerates its full process and thread tree via `procfs`, and applies `sched_setaffinity` masks: the active tree runs unrestricted while previously active trees are restricted to background cores. This improves cache locality for the foreground application.
 
-## 🚀 Overview
-VAYU is a highly optimized C++ systems daemon designed to mitigate CFS (Completely Fair Scheduler) contention on desktop Linux. Unlike traditional optimizers that rely on modifying static software `nice` values, VAYU performs **Real-Time Dynamic Affinity Migration**.
-
-By synchronizing with Wayland compositor IPC events, VAYU identifies foreground graphical applications in sub-milliseconds, enumerates their entire process tree via `procfs`, and executes `sched_setaffinity` system calls. This isolates background workloads to specific CPU cores and reduces L1/L2 cache thrashing for the user's active application.
-
-## 🧠 System Architecture
+## Architecture
 
 ```text
- ┌─────────────────┐       ┌─────────────────┐       ┌──────────────────┐
- │ User Focus      │ ───►  │ Wayland IPC     │ ───►  │ VAYU C++ Daemon  │
- └─────────────────┘       └─────────────────┘       └────────┬─────────┘
-                                                              │
-                            ┌─────────────────────────────────┴─────────┐
-                            ▼                                           ▼
-                 [ sched_setaffinity ]                       [ sched_setaffinity ]
-                 Target: Active PID Tree                     Target: Background PID Trees
-                 Mask: Unrestricted (0, 1, 2, 3)             Mask: Restricted (2, 3)
-                            │                                           │
-                            ▼                                           ▼
-             ┌─────────────────────────────┐             ┌─────────────────────────────┐
-             │ Unrestricted Execution      │             │ Segregated Execution        │
-             │ (High Cache Locality)       │             │ (High Contention Zone)      │
-             └─────────────────────────────┘             └─────────────────────────────┘
+Window focus -> Wayland IPC socket -> VAYU daemon -> sched_setaffinity
+                                                   Active tree: unrestricted mask
+                                                   Background trees: restricted mask
 ```
 
-## ⚡ Key Features
-1. **eBPF Kernel Bridge (VAYU 5.0):** VAYU pioneers the User-Space to Kernel-Space eBPF pipeline for desktop compositors. The daemon natively creates an eBPF Hash Map in the Linux Kernel using `sys_bpf`. Real-time active and background PID trees are written directly into kernel memory. Future integration with `sched_ext` (SCX) allows the kernel to natively read this map and block context switches at the silicon level.
-2. **Recursive Thread Discovery:** Parses `/proc/<pid>/task` to dynamically identify and migrate every child process and execution thread of multi-process applications (e.g., Chromium).
-3. **Zero-Polling IPC Hook:** Utilizes blocking I/O on UNIX domain sockets (`.socket.sock` & `.socket2.sock`) for 0.00% idle CPU overhead.
-4. **Orphan Protection:** Actively tracks PID lifecycles utilizing `kill(pid, 0)` with robust `EPERM` vs `ESRCH` handling to prevent memory leaks from OS PID recycling.
-5. **Daemon Whitelisting:** Extensible policy engine (`~/.config/vayu/whitelist.conf`) to bypass real-time audio and critical system daemons (e.g., `pipewire`).
+- Blocking I/O on the compositor event socket; no polling while idle
+- Recursive thread discovery via `/proc/<pid>/task` and `/proc/*/stat` (covers multi-process applications such as Chromium)
+- PID lifecycle tracking via `kill(pid, 0)` with `ESRCH`/`EPERM` handling to tolerate PID reuse
+- Configurable process whitelist (`~/.config/vayu/whitelist.conf`, see `whitelist.example`) to exempt audio and system daemons
+- Optional eBPF map (`BPF_MAP_TYPE_HASH`, PID -> status) populated from userspace; kernel-side enforcement via `vayu_kernel.bpf.o` where loaded
 
-## 🛡️ Deployment
-VAYU must be compiled natively for your target CPU architecture and requires `CAP_SYS_NICE` and `CAP_BPF` capabilities to override the kernel scheduler and interact with eBPF maps.
+## Requirements
+
+- Linux with Wayland compositor exposing an IPC event socket (Hyprland supported)
+- `CAP_SYS_NICE` for negative nice values and affinity override; `CAP_BPF` and `CAP_SYS_ADMIN` for eBPF map creation
+
+## Build and install
 
 ```bash
-# Compile both the C++ Daemon and the eBPF Kernel Module
 make all
-
-# Inject Kernel Capabilities
-sudo setcap 'cap_sys_nice,cap_sys_admin,cap_bpf+ep' vayu-daemon
+sudo make install
+sudo setcap 'cap_sys_nice,cap_sys_admin,cap_bpf+ep' /usr/bin/vayu-daemon
+systemctl --user daemon-reload
+systemctl --user enable --now vayu.service
 ```
 
-## ⚖️ Legal
-Concept and Architectural Draft by **Saurav Kumar**. 
+`make install` respects `DESTDIR` and `PREFIX` (default `/usr`). See `Makefile` for installed paths.
+
+Manual setup is also available via `install.sh`.
+
+## Configuration
+
+Whitelist file: `~/.config/vayu/whitelist.conf` (one process name or substring per line, `#` for comments). See `whitelist.example`.
+
+## Limitations
+
+- CPU masks are currently fixed for a 4-core topology (active: cores 0-3, background: cores 2-3). Other topologies require source adjustment.
+- Hyprland IPC only. Other compositors are not supported.
+- eBPF map creation requires elevated capabilities; without them the daemon falls back to syscall-only mode.
+
+## License
+
+MIT. See `LICENSE`.
