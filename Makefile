@@ -1,6 +1,7 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -Wall -Wextra
 CLANG ?= clang
+BPF_CFLAGS ?= -O2 -Wall
 PREFIX ?= /usr
 ARCH := $(shell uname -m | sed 's/x86_64/x86/' | sed 's/i386/x86/')
 BPF_TARGET := bpf
@@ -8,7 +9,7 @@ BPF_TARGET := bpf
 all: vayu_kernel.bpf.o vayu-daemon
 
 vayu_kernel.bpf.o: vayu_kernel.bpf.c
-	$(CLANG) -g -O2 -target $(BPF_TARGET) -D__TARGET_ARCH_$(ARCH) -c $< -o $@
+	$(CLANG) $(BPF_CFLAGS) -target $(BPF_TARGET) -D__TARGET_ARCH_$(ARCH) -c $< -o $@
 
 vayu-daemon: vayu.cpp
 	$(CXX) $(CXXFLAGS) vayu.cpp -o vayu-daemon
