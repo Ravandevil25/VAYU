@@ -1,5 +1,6 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -Wall -Wextra
+LDFLAGS ?=
 CLANG ?= clang
 BPF_CFLAGS ?= -O2 -Wall
 PREFIX ?= /usr
@@ -12,7 +13,7 @@ vayu_kernel.bpf.o: vayu_kernel.bpf.c
 	$(CLANG) $(BPF_CFLAGS) -target $(BPF_TARGET) -D__TARGET_ARCH_$(ARCH) -c $< -o $@
 
 vayu-daemon: vayu.cpp
-	$(CXX) $(CXXFLAGS) vayu.cpp -o vayu-daemon
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) vayu.cpp -o vayu-daemon
 
 install: all
 	install -Dm755 vayu-daemon "$(DESTDIR)$(PREFIX)/bin/vayu-daemon"
@@ -21,7 +22,7 @@ install: all
 	install -Dm644 whitelist.example "$(DESTDIR)$(PREFIX)/share/doc/vayu/whitelist.example"
 	install -Dm644 README.md "$(DESTDIR)$(PREFIX)/share/doc/vayu/README.md"
 	install -Dm644 VAYU_Whitepaper.md "$(DESTDIR)$(PREFIX)/share/doc/vayu/VAYU_Whitepaper.md"
-	install -Dm644 LICENSE "$(DESTDIR)$(PREFIX)/share/licenses/vayu/LICENSE"
+	install -Dm644 LICENSE "$(DESTDIR)$(PREFIX)/share/licenses/vayu-git/LICENSE"
 
 clean:
 	rm -f *.o vayu-daemon
